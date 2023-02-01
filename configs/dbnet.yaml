@@ -1,0 +1,3 @@
+backbone: resnet50
+deform_conv: true
+dcn_lr_mul: 0.1   # deformable convolution learning rate multiplier
