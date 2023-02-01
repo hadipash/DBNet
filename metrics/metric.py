@@ -1,7 +1,8 @@
-import numpy as np
-from shapely.geometry import Polygon
+from typing import List
 
+import numpy as np
 from mindspore import nn
+from shapely.geometry import Polygon
 
 from .post_process import SegDetectorRepresenter
 
@@ -33,34 +34,34 @@ class AverageMeter:
 
 
 class DetectionIoUEvaluator:
-    def __init__(self, iou_constraint=0.5, area_precision_constraint=0.5):
-        self.iou_constraint = iou_constraint
-        self.area_precision_constraint = area_precision_constraint
+    def __init__(self, min_iou=0.5, min_intersect=0.5):
+        self._min_iou = min_iou
+        self._min_intersect = min_intersect
 
-    def evaluate_image(self, gt: list, preds: list):
+    def evaluate_image(self, gt: List[dict], preds: List[np.ndarray]):
         # filter invalid groundtruth polygons and split them into useful and ignored
-        gt_polys, ignore_gt_polys = [], []
+        gt_polys, gt_ignore = [], []
         for sample in gt:
             poly = Polygon(sample['polys'])
             if poly.is_valid and poly.is_simple:
-                if not sample['dontcare']:
+                if not sample['ignore']:
                     gt_polys.append(poly)
                 else:
-                    ignore_gt_polys.append(poly)
+                    gt_ignore.append(poly)
 
         # repeat the same step for the predicted polygons
-        det_polys, ignore_det_polys = [], []
+        det_polys, det_ignore = [], []
         for pred in preds:
             poly = Polygon(pred)
             if poly.is_valid and poly.is_simple:
                 poly_area = poly.area
-                if ignore_gt_polys and poly_area > 0:
-                    for ignore_poly in ignore_gt_polys:
-                        intersected_area = _get_intersect(ignore_poly, poly)
-                        precision = intersected_area / poly_area
+                if gt_ignore and poly_area > 0:
+                    for ignore_poly in gt_ignore:
+                        intersect_area = _get_intersect(ignore_poly, poly)
+                        precision = intersect_area / poly_area
                         # If precision enough, append as ignored detection
-                        if precision > self.area_precision_constraint:
-                            ignore_det_polys.append(poly)
+                        if precision > self._min_intersect:
+                            det_ignore.append(poly)
                             break
                     else:
                         det_polys.append(poly)
@@ -78,7 +79,7 @@ class DetectionIoUEvaluator:
                 for det_idx in range(len(det_polys)):
                     if det_rect_mat[det_idx] == 0:  # the match is not found yet
                         iou_mat[gt_idx, det_idx] = _get_iou(det_polys[det_idx], gt_polys[gt_idx])
-                        if iou_mat[gt_idx, det_idx] > self.iou_constraint:
+                        if iou_mat[gt_idx, det_idx] > self._min_iou:
                             # Mark the visit arrays
                             det_rect_mat[det_idx] = 1
                             det_match += 1
@@ -86,15 +87,15 @@ class DetectionIoUEvaluator:
                             break
 
         if not gt_polys:
-            recall = 1.0
-            precision = 0.0 if det_polys else 1.0
+            recall = 1.
+            precision = 0. if det_polys else 1.
         else:
-            recall = float(det_match) / len(gt_polys)
-            precision = float(det_match) / len(det_polys) if det_polys else 0
-        hmean = 0 if (precision + recall) == 0 else \
-                2.0 * precision * recall / (precision + recall)
+            recall = det_match / len(gt_polys)
+            precision = det_match / len(det_polys) if det_polys else 0.
+        hmean = 0. if (precision + recall) == 0 else \
+                2. * precision * recall / (precision + recall)
 
-        metric = {
+        return {
             'precision': precision,
             'recall': recall,
             'hmean': hmean,
@@ -102,21 +103,20 @@ class DetectionIoUEvaluator:
             'iou_mat': [] if len(det_polys) > 100 else iou_mat.tolist(),
             'gt_polys': gt_polys,
             'det_polys': det_polys,
-            'gt_care_num': len(gt_polys),
-            'det_care_num': len(det_polys),
-            'gt_dont_care': ignore_gt_polys,
-            'det_dont_care': ignore_det_polys,
+            'gt_num': len(gt_polys),
+            'det_num': len(det_polys),
+            'gt_ignore': gt_ignore,
+            'det_ignore': det_ignore,
             'det_matched': det_match
         }
-        return metric
 
     def combine_results(self, results):
         num_global_care_gt = 0
         num_global_care_det = 0
         matched_sum = 0
         for result in results:
-            num_global_care_gt += result['gt_care_num']
-            num_global_care_det += result['det_care_num']
+            num_global_care_gt += result['gt_num']
+            num_global_care_det += result['det_num']
             matched_sum += result['det_matched']
 
         method_recall = 0 if num_global_care_gt == 0 else float(
@@ -144,20 +144,21 @@ class QuadMetric:
         output: (polygons, ...)
         '''
         gt_polys = batch['polys'].astype(np.float32)
-        gt_dontcare = batch['dontcare']
+        gt_ignore_info = batch['ignore']
         pred_polys = np.array(output[0])
         pred_scores = np.array(output[1])
 
-        # Loop i for every batch
-        for i in range(len(gt_polys)):  # FIXME: iterates over all samples in a batch, but evaluates only the last one
-            gt = [{'polys': gt_polys[i][j], 'dontcare': gt_dontcare[i][j]}
-                  for j in range(len(gt_polys[i]))]
+        result = []
+        for sample_id in range(len(gt_polys)):
+            gt = [{'polys': gt_polys[sample_id][j], 'ignore': gt_ignore_info[sample_id][j]}
+                  for j in range(len(gt_polys[sample_id]))]
             if self.is_output_polygon:
-                pred = [pred_polys[i][j] for j in range(len(pred_polys[i]))]    # TODO: why polygons are not filtered?
+                pred = [sample for sample in pred_polys[sample_id]]    # TODO: why polygons are not filtered?
             else:
-                pred = [pred_polys[i][j, :, :].astype(np.int32)
-                        for j in range(pred_polys[i].shape[0]) if pred_scores[i][j] >= box_thresh]
-        return self.evaluator.evaluate_image(gt, pred)
+                pred = [pred_polys[sample_id][j].astype(np.int32)
+                        for j in range(pred_polys[sample_id].shape[0]) if pred_scores[sample_id][j] >= box_thresh]
+            result.append(self.evaluator.evaluate_image(gt, pred))
+        return result
 
 
     def validate_measure(self, batch, output):
@@ -196,9 +197,9 @@ class MyMetric(nn.Metric):
 
     def update(self, *inputs):
         preds, gt = inputs
-        gt = {'polys': gt[0].asnumpy(), 'dontcare': gt[1].asnumpy()}    # FIXME
+        gt = {'polys': gt[0].asnumpy(), 'ignore': gt[1].asnumpy()}
         boxes, scores = self._post_process(preds)
-        self._raw_metrics.append(self._metric.validate_measure(gt, (boxes, scores)))
+        self._raw_metrics.extend(self._metric.validate_measure(gt, (boxes, scores)))
 
     def eval(self):
         return self._metric.gather_measure(self._raw_metrics)
