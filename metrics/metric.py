@@ -1,10 +1,17 @@
 import numpy as np
-import cv2
 from shapely.geometry import Polygon
 
 from mindspore import nn
 
 from .post_process import SegDetectorRepresenter
+
+
+def _get_intersect(pD, pG):
+    return pD.intersection(pG).area
+
+
+def _get_iou(pD, pG):
+    return pD.intersection(pG).area / pD.union(pG).area
 
 
 class AverageMeter:
@@ -26,122 +33,64 @@ class AverageMeter:
 
 
 class DetectionIoUEvaluator:
-    def __init__(self, is_output_polygon=False, iou_constraint=0.5, area_precision_constraint=0.5):
-        self.is_output_polygon = is_output_polygon
+    def __init__(self, iou_constraint=0.5, area_precision_constraint=0.5):
         self.iou_constraint = iou_constraint
         self.area_precision_constraint = area_precision_constraint
 
-    def evaluate_image(self, gt, pred):
-        def get_union(pD, pG):
-            return Polygon(pD).union(Polygon(pG)).area
+    def evaluate_image(self, gt: list, preds: list):
+        # filter invalid groundtruth polygons and split them into useful and ignored
+        gt_polys, ignore_gt_polys = [], []
+        for sample in gt:
+            poly = Polygon(sample['polys'])
+            if poly.is_valid and poly.is_simple:
+                if not sample['dontcare']:
+                    gt_polys.append(poly)
+                else:
+                    ignore_gt_polys.append(poly)
 
-        def get_intersection(pD, pG):
-            return Polygon(pD).intersection(Polygon(pG)).area
+        # repeat the same step for the predicted polygons
+        det_polys, ignore_det_polys = [], []
+        for pred in preds:
+            poly = Polygon(pred)
+            if poly.is_valid and poly.is_simple:
+                poly_area = poly.area
+                if ignore_gt_polys and poly_area > 0:
+                    for ignore_poly in ignore_gt_polys:
+                        intersected_area = _get_intersect(ignore_poly, poly)
+                        precision = intersected_area / poly_area
+                        # If precision enough, append as ignored detection
+                        if precision > self.area_precision_constraint:
+                            ignore_det_polys.append(poly)
+                            break
+                    else:
+                        det_polys.append(poly)
+                else:
+                    det_polys.append(poly)
 
-        def get_intersection_over_union(pD, pG):
-            return get_intersection(pD, pG) / get_union(pD, pG)
-
-        # num of 'pred' & 'gt' matching
-        det_match = 0
         pairs = []
+        det_match = 0
         iou_mat = np.empty([1, 1])
-
-        # num of cared polys
-        num_gt_care = 0
-        num_det_care = 0
-
-        # list of polys
-        gt_polys = []
-        det_polys = []
-
-        # idx of dontcare polys
-        gt_polys_dontcare = []
-        det_polys_dontcare = []
-
-        # log string
-        evaluation_log = ""
-
-        ## gt
-        for i in range(len(gt)):
-            poly = gt[i]['polys']
-            dontcare = gt[i]['dontcare']
-            if not Polygon(poly).is_valid or not Polygon(poly).is_simple:
-                continue
-            gt_polys.append(poly)
-            if dontcare:
-                gt_polys_dontcare.append(len(gt_polys) - 1)
-
-        evaluation_log += f"GT polygons: {str(len(gt_polys))}" + \
-        (f" ({len(gt_polys_dontcare)} don't care)\n" if gt_polys_dontcare else "\n")
-
-        for i in range(len(pred)):
-            poly = pred[i]
-            if not Polygon(poly).is_valid or not Polygon(poly).is_simple:
-                continue
-            det_polys.append(poly)
-
-            # For dontcare gt
-            if gt_polys_dontcare:
-                for idx in gt_polys_dontcare:
-                    dontcare_poly = gt_polys[idx]
-                    intersected_area = get_intersection(dontcare_poly, poly)
-                    poly_area = Polygon(poly).area
-                    precision = 0 if poly_area == 0 else intersected_area / poly_area
-                    # If precision enough, append as dontcare det.
-                    if precision > self.area_precision_constraint:
-                        det_polys_dontcare.append(len(det_polys) - 1)
-                        break
-
-        evaluation_log += f"DET polygons: {len(det_polys)}" + \
-        (f" ({len(det_polys_dontcare)} don't care)\n" if det_polys_dontcare else "\n")
-
         if gt_polys and det_polys:
-            # visit arrays
             iou_mat = np.empty([len(gt_polys), len(det_polys)])
-            gt_rect_mat = np.zeros(len(gt_polys), np.int8)
             det_rect_mat = np.zeros(len(det_polys), np.int8)
-
-            # IoU
-            if self.is_output_polygon:
-                # polygon
-                for gt_idx in range(len(gt_polys)):
-                    for det_idx in range(len(det_polys)):
-                        pG = gt_polys[gt_idx]
-                        pD = det_polys[det_idx]
-                        iou_mat[gt_idx, det_idx] = get_intersection_over_union(pD, pG)
-            else:
-                # rectangle
-                for gt_idx in range(len(gt_polys)):
-                    for det_idx in range(len(det_polys)):
-                        pG = np.float32(gt_polys[gt_idx])
-                        pD = np.float32(det_polys[det_idx])
-                        iou_mat[gt_idx, det_idx] = self.iou_rotate(pD, pG)
 
             for gt_idx in range(len(gt_polys)):
                 for det_idx in range(len(det_polys)):
-                    # If IoU == 0 and care
-                    if gt_rect_mat[gt_idx] == 0 and det_rect_mat[det_idx] == 0 \
-                    and (gt_idx not in gt_polys_dontcare) and (det_idx not in det_polys_dontcare):
-                        # If IoU enough
+                    if det_rect_mat[det_idx] == 0:  # the match is not found yet
+                        iou_mat[gt_idx, det_idx] = _get_iou(det_polys[det_idx], gt_polys[gt_idx])
                         if iou_mat[gt_idx, det_idx] > self.iou_constraint:
                             # Mark the visit arrays
-                            gt_rect_mat[gt_idx] = 1
                             det_rect_mat[det_idx] = 1
                             det_match += 1
                             pairs.append({'gt': gt_idx, 'det': det_idx})
-                            evaluation_log += f"Match GT #{gt_idx} with Det #{det_idx}\n"
+                            break
 
-        ## summary
-        num_gt_care += (len(gt_polys) - len(gt_polys_dontcare))
-        num_det_care += (len(det_polys) - len(det_polys_dontcare))
-
-        if num_gt_care == 0:
+        if not gt_polys:
             recall = 1.0
-            precision = 0.0 if num_det_care > 0 else 1.0
+            precision = 0.0 if det_polys else 1.0
         else:
-            recall = float(det_match) / num_gt_care
-            precision = 0 if num_det_care == 0 else float(
-                det_match) / num_det_care
+            recall = float(det_match) / len(gt_polys)
+            precision = float(det_match) / len(det_polys) if det_polys else 0
         hmean = 0 if (precision + recall) == 0 else \
                 2.0 * precision * recall / (precision + recall)
 
@@ -153,12 +102,11 @@ class DetectionIoUEvaluator:
             'iou_mat': [] if len(det_polys) > 100 else iou_mat.tolist(),
             'gt_polys': gt_polys,
             'det_polys': det_polys,
-            'gt_care_num': num_gt_care,
-            'det_care_num': num_det_care,
-            'gt_dont_care': gt_polys_dontcare,
-            'det_dont_care': det_polys_dontcare,
-            'det_matched': det_match,
-            'evaluation_log': evaluation_log
+            'gt_care_num': len(gt_polys),
+            'det_care_num': len(det_polys),
+            'gt_dont_care': ignore_gt_polys,
+            'det_dont_care': ignore_det_polys,
+            'det_matched': det_match
         }
         return metric
 
@@ -181,32 +129,11 @@ class DetectionIoUEvaluator:
                           'recall': method_recall, 'hmean': methodHmean}
         return method_metrics
 
-    @staticmethod
-    def iou_rotate(box_a, box_b, method='union'):
-        rect_a = cv2.minAreaRect(box_a)
-        rect_b = cv2.minAreaRect(box_b)
-        r1 = cv2.rotatedRectangleIntersection(rect_a, rect_b)
-        if r1[0] == 0:
-            return 0
-        inter_area = cv2.contourArea(r1[1])
-        area_a = cv2.contourArea(box_a)
-        area_b = cv2.contourArea(box_b)
-        union_area = area_a + area_b - inter_area
-        if union_area == 0 or inter_area == 0:
-            return 0
-        if method == 'union':
-            iou = inter_area / union_area
-        elif method == 'intersection':
-            iou = inter_area / min(area_a, area_b)
-        else:
-            raise NotImplementedError
-        return iou
-
 
 class QuadMetric:
     def __init__(self, is_output_polygon=False):
         self.is_output_polygon = is_output_polygon
-        self.evaluator = DetectionIoUEvaluator(is_output_polygon=is_output_polygon)
+        self.evaluator = DetectionIoUEvaluator()
 
     def measure(self, batch, output, box_thresh=0.7):
         '''
@@ -222,11 +149,11 @@ class QuadMetric:
         pred_scores = np.array(output[1])
 
         # Loop i for every batch
-        for i in range(len(gt_polys)):
+        for i in range(len(gt_polys)):  # FIXME: iterates over all samples in a batch, but evaluates only the last one
             gt = [{'polys': gt_polys[i][j], 'dontcare': gt_dontcare[i][j]}
                   for j in range(len(gt_polys[i]))]
             if self.is_output_polygon:
-                pred = [pred_polys[i][j] for j in range(len(pred_polys[i]))]
+                pred = [pred_polys[i][j] for j in range(len(pred_polys[i]))]    # TODO: why polygons are not filtered?
             else:
                 pred = [pred_polys[i][j, :, :].astype(np.int32)
                         for j in range(pred_polys[i].shape[0]) if pred_scores[i][j] >= box_thresh]
@@ -234,10 +161,7 @@ class QuadMetric:
 
 
     def validate_measure(self, batch, output):
-        return self.measure(batch, output, box_thresh=0.55)
-
-    def evaluate_measure(self, batch, output):
-        return self.measure(batch, output), np.linspace(0, batch['image'].shape[0]).tolist()
+        return self.measure(batch, output, box_thresh=0.55)     # TODO: why is here a fixed threshold and different from the above?
 
     def gather_measure(self, raw_metrics):
         raw_metrics = [image_metrics for image_metrics in raw_metrics]
@@ -272,7 +196,7 @@ class MyMetric(nn.Metric):
 
     def update(self, *inputs):
         preds, gt = inputs
-        gt = {'polys': gt[0].asnumpy(), 'dontcare': gt[1].asnumpy()}    # FIXME: why not numpy by default?
+        gt = {'polys': gt[0].asnumpy(), 'dontcare': gt[1].asnumpy()}    # FIXME
         boxes, scores = self._post_process(preds)
         self._raw_metrics.append(self._metric.validate_measure(gt, (boxes, scores)))
 
