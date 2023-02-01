@@ -53,38 +53,41 @@ class AdaptiveScaleFusion(nn.Cell):
 
 
 class DBNet(nn.Cell):
-    def __init__(self, backbone, in_channels, inner_channels=256, bias=False, adaptive=False, k=50):
+    def __init__(self, backbone, inner_channels=256, bias=False, weight_init='HeUniform', adaptive=False, k=50):
         super().__init__()
         self.backbone = backbone
         self.adaptive = adaptive
         self.inner_channels = inner_channels
 
-        assert len(in_channels) == 4, f'Number of input features should be 4, instead received {len(in_channels)}'
-        self.unify_channels = nn.CellList([nn.Conv2d(ch, inner_channels, kernel_size=1, has_bias=bias, pad_mode='valid')
-                                           for ch in in_channels])
+        self.unify_channels = nn.CellList([nn.Conv2d(ch, inner_channels, kernel_size=1, pad_mode='valid', has_bias=bias,
+                                                     weight_init=weight_init) for ch in self.backbone.out_channels])
 
         outer_channels = inner_channels // 4
         self.out = nn.CellList([nn.Conv2d(inner_channels, outer_channels, kernel_size=3, padding=1, pad_mode='pad',
-                                          has_bias=bias) for _ in range(4)])
+                                          has_bias=bias, weight_init=weight_init)
+                                for _ in range(len(self.backbone.out_channels))])
 
         self.fuse = ops.Concat(axis=1)
 
-        self.segm = self._init_heatmap(inner_channels, outer_channels, bias)
+        self.segm = self._init_heatmap(inner_channels, outer_channels, weight_init, bias)
         if adaptive:
-            self.thresh = self._init_heatmap(inner_channels, outer_channels, bias)
+            self.thresh = self._init_heatmap(inner_channels, outer_channels, weight_init, bias)
             self.k = k
             self.diff_bin = nn.Sigmoid()
 
     @staticmethod
-    def _init_heatmap(inner_channels, outer_channels, bias):
+    def _init_heatmap(inner_channels, outer_channels, weight_init, bias):
         return nn.SequentialCell([     # `pred` block from the original work
-            nn.Conv2d(inner_channels, outer_channels, kernel_size=3, padding=1, pad_mode='pad', has_bias=bias),
+            nn.Conv2d(inner_channels, outer_channels, kernel_size=3, padding=1, pad_mode='pad', has_bias=bias,
+                      weight_init=weight_init),
             nn.BatchNorm2d(outer_channels),
             nn.ReLU(),
-            nn.Conv2dTranspose(outer_channels, outer_channels, kernel_size=2, stride=2, pad_mode='valid', has_bias=True),
+            nn.Conv2dTranspose(outer_channels, outer_channels, kernel_size=2, stride=2, pad_mode='valid', has_bias=True,
+                               weight_init=weight_init),
             nn.BatchNorm2d(outer_channels),
             nn.ReLU(),
-            nn.Conv2dTranspose(outer_channels, 1, kernel_size=2, stride=2, pad_mode='valid', has_bias=True),
+            nn.Conv2dTranspose(outer_channels, 1, kernel_size=2, stride=2, pad_mode='valid', has_bias=True,
+                               weight_init=weight_init),
             nn.Sigmoid()
         ])
 
@@ -118,14 +121,14 @@ class DBNetPP(DBNet):
         self.fuse = AdaptiveScaleFusion(self.inner_channels)
 
 
-def create_model(model: str, backbone='deform_resnet50', train=False):
-    from backbones.resnet_dcn import DBNetResNet, DBNetResNetDCN, Bottleneck
+def create_model(model: str, backbone='resnet50', train=False):
+    from backbones.resnet_dcn import create_backbone
 
-    backbone = DBNetResNetDCN(Bottleneck, [3, 4, 6, 3])
+    backbone = create_backbone(backbone, dcn=False)
 
     if model == 'dbnet':
-        return DBNet(backbone, in_channels=[256, 512, 1024, 2048], adaptive=train)
+        return DBNet(backbone, adaptive=train)
     elif model == 'dbnet++':
-        return DBNetPP(backbone=backbone, in_channels=[256, 512, 1024, 2048], adaptive=train)
+        return DBNetPP(backbone=backbone, adaptive=train)
     else:
         raise ValueError(f'Unknown model {model}')
