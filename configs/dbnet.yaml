@@ -1,3 +1,12 @@
-backbone: resnet50
-deform_conv: true
-dcn_lr_mul: 0.1   # deformable convolution learning rate multiplier
+model:
+  name: dbnet
+  use_bias: false
+  backbone:
+    name: resnet50
+    deform_conv: true
+    dcn_lr_mul: 0.1   # deformable convolution learning rate multiplier
+train:
+  epochs: 100
+  learning_rate:
+    init: 0.007
+    warmup: 5
