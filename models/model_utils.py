@@ -2,7 +2,7 @@ from mindspore import nn
 from mindspore.nn.learning_rate_schedule import LearningRateSchedule
 
 
-class CustomWithLossCell(nn.Cell):
+class DBNetWithLossCell(nn.Cell):
     def __init__(self, backbone, loss_fn):
         super().__init__()
         self._backbone = backbone
@@ -13,14 +13,15 @@ class CustomWithLossCell(nn.Cell):
         return self._loss_fn(output, labels)
 
 
-class CustomWithEvalCell(nn.Cell):
+class DBNetWithEvalCell(nn.Cell):
     def __init__(self, network):
         super().__init__()
         self._network = network
 
-    def construct(self, data, *labels):
+    def construct(self, data, label1, label2):
         output = self._network(data)
-        return output, labels
+        # TODO: perform boxes and scores extraction here?
+        return output, label1, label2
 
 
 class DynamicLR(LearningRateSchedule):

@@ -185,7 +185,7 @@ class QuadMetric:
         }
 
 
-class MyMetric(nn.Metric):
+class DBNetMetric(nn.Metric):
     def __init__(self):
         super().__init__()
         self._post_process = SegDetectorRepresenter(box_thresh=0.6)
@@ -196,8 +196,8 @@ class MyMetric(nn.Metric):
         self._raw_metrics = []
 
     def update(self, *inputs):
-        preds, gt = inputs
-        gt = {'polys': gt[0].asnumpy(), 'ignore': gt[1].asnumpy()}
+        preds, polys, ignore = inputs
+        gt = {'polys': polys.asnumpy(), 'ignore': ignore.asnumpy()}
         boxes, scores = self._post_process(preds)
         self._raw_metrics.extend(self._metric.validate_measure(gt, (boxes, scores)))
 

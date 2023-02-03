@@ -47,8 +47,10 @@ class Config:
     def __repr__(self):
         return self.__str__()
 
-def get_img(img_path):
-    img = cv2.imread(img_path, cv2.IMREAD_COLOR).astype('float32')
+def get_img(img_path, as_float=True):
+    img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+    if as_float:
+        img = img.astype('float32')
     return img
 
 

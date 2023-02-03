@@ -1,1 +1,1 @@
-from .callbacks import ValCallback
+from .callbacks import EpochSummary
