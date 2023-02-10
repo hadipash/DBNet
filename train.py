@@ -4,7 +4,7 @@ from mindspore import nn
 from models import create_model
 from losses.total_dbnet_loss import L1BalanceCELoss
 from models.model_utils import DBNetWithLossCell, DBNetWithEvalCell, DynamicLR
-from datasets.load import create_dataset
+from datasets import create_dataset
 from metrics.metric import DBNetMetric
 from callbacks import EpochSummary
 

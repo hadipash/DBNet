@@ -1,99 +1,7 @@
-# Copyright 2022 Huawei Technologies Co., Ltd
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ============================================================================
-# This file refers to the project https://github.com/MhLiao/DB.git
-
-"""DBNet Dataset pre process functions."""
-import warnings
 import cv2
-import pyclipper
-from shapely.geometry import Polygon
 import numpy as np
-
-warnings.filterwarnings("ignore")
-
-
-class MakeSegDetectionData:
-    """
-    Making binary mask from detection data with ICDAR format.
-    Typically following the process of class `MakeICDARData`.
-    """
-    def __init__(self, min_text_size=8, shrink_ratio=0.4, is_training=True):
-        self.min_text_size = min_text_size
-        self.shrink_ratio = shrink_ratio
-        self.is_training = is_training
-
-    def process(self, img, polys, dontcare):
-        """
-        required keys:
-            image, polygons, ignore_tags, filename
-        adding keys:
-            mask
-        """
-        h, w = img.shape[:2]
-        if self.is_training:
-            polys, dontcare = self.validate_polygons(polys, dontcare, h, w)
-        gt = np.zeros((1, h, w), dtype=np.float32)
-        mask = np.ones((h, w), dtype=np.float32)
-        for i in range(len(polys)):
-            polygon = polys[i]
-            height = max(polygon[:, 1]) - min(polygon[:, 1])
-            width = max(polygon[:, 0]) - min(polygon[:, 0])
-            if dontcare[i] or min(height, width) < self.min_text_size:
-                cv2.fillPoly(mask, polygon.astype(np.int32)[np.newaxis, :, :], 0)
-                dontcare[i] = True
-            else:
-                polygon_shape = Polygon(polygon)
-                distance = polygon_shape.area * \
-                           (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length
-                subject = [tuple(l) for l in polys[i]]
-                padding = pyclipper.PyclipperOffset()
-                padding.AddPath(subject, pyclipper.JT_ROUND, pyclipper.ET_CLOSEDPOLYGON)
-                shrunk = padding.Execute(-distance)
-                if shrunk == []:
-                    cv2.fillPoly(mask, polygon.astype(np.int32)[np.newaxis, :, :], 0)
-                    dontcare[i] = True
-                    continue
-                shrunk = np.array(shrunk[0]).reshape(-1, 2)
-                cv2.fillPoly(gt[0], [shrunk.astype(np.int32)], 1)
-        return img, gt, mask
-
-    def validate_polygons(self, polygons, ignore_tags, h, w):
-        """polygons (numpy.array, required): of shape (num_instances, num_points, 2)"""
-        if not polygons:
-            return polygons, ignore_tags
-        assert len(polygons) == len(ignore_tags)
-
-        for polygon in polygons:
-            polygon[:, 0] = np.clip(polygon[:, 0], 0, w - 1)
-            polygon[:, 1] = np.clip(polygon[:, 1], 0, h - 1)
-
-        for i in range(len(polygons)):
-            area = self.polygon_area(polygons[i])
-            if abs(area) < 1:
-                ignore_tags[i] = True
-            if area > 0:
-                polygons[i] = polygons[i][::-1, :]
-        return polygons, ignore_tags
-
-    def polygon_area(self, polygon):
-        edge = 0
-        for i in range(polygon.shape[0]):
-            next_index = (i + 1) % polygon.shape[0]
-            edge += (polygon[next_index, 0] - polygon[i, 0]) * (polygon[next_index, 1] - polygon[i, 1])
-
-        return edge / 2.
+import pyclipper
+from shapely import Polygon
 
 
 class MakeBorderMap:
@@ -104,16 +12,16 @@ class MakeBorderMap:
         self.thresh_min = thresh_min
         self.thresh_max = thresh_max
 
-    def process(self, img, polys, dontcare):
-        thresh_map = np.zeros(img.shape[:2], dtype=np.float32)
-        thresh_mask = np.zeros(img.shape[:2], dtype=np.float32)
+    def __call__(self, data):
+        thresh_map = np.zeros(data['image'].shape[:2], dtype=np.float32)
+        thresh_mask = np.zeros(data['image'].shape[:2], dtype=np.float32)
 
-        for i in range(len(polys)):
-            if dontcare[i]:
-                continue
-            self.draw_border_map(polys[i], thresh_map, mask=thresh_mask)
+        for i in range(len(data['polys'])):
+            if not data['ignore'][i]:
+                self.draw_border_map(data['polys'][i], thresh_map, mask=thresh_mask)
         thresh_map = thresh_map * (self.thresh_max - self.thresh_min) + self.thresh_min
-        return img, thresh_map, thresh_mask
+        data['thresh_map'] = thresh_map
+        data['thresh_mask'] = thresh_mask
 
     def draw_border_map(self, polygon, canvas, mask):
         polygon = np.array(polygon)
