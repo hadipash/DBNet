@@ -2,32 +2,39 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
+from scipy.io import loadmat
 from mindspore.dataset.vision import RandomColorAdjust, ToPIL, ToTensor
 
 from .base_dataset import OCRDataset
-from .utils import load_image, scale_pad, resize, get_bboxes
+from .utils import load_image, scale_pad, resize
 
 
-class ICDAR2015Dataset(OCRDataset):
-    """IC15 DataLoader"""
-    def __init__(self, path: str, augments: dict, transforms: dict, target_size: List, train: bool):
+class SynthTextDataset(OCRDataset):
+    def __init__(self, path: str, augments: dict, transforms: dict, target_size: List, train=True):
         super().__init__(augments, transforms)
         self._train = train
         # TODO: move keys to the config file
         self._keys = ['image', 'gt', 'mask', 'thresh_map', 'thresh_mask'] if train else ['image', 'polys', 'ignore']
         self._size = target_size
-
         path = Path(path)
-        self._img_paths = [str(img_path) for img_path in path.glob(f"{'train' if train else 'test'}_images/*")]
-        gt_paths = [path / f"{'train' if train else 'test'}_gts" / ('gt_' + Path(img_path).stem + '.txt')
-                    for img_path in self._img_paths]
-        self._boxes = [get_bboxes(gt, icdar2015=True) for gt in gt_paths]
+        self._img_paths, self._boxes = self._extract_labels(path)
+
+    @staticmethod
+    def _extract_labels(path):
+        mat = loadmat(path / 'gt.mat')
+        images = mat['imnames'][0]
+        images = [str(path / image[0]) for image in images]
+
+        boxes = mat['wordBB'][0]
+        boxes = [box.transpose().reshape(-1, 8) for box in boxes]   # to match IC15. Also some labels just have (4, 2) shape without the batch dimension
+        return images, boxes
+
 
     def __getitem__(self, idx):
         data = {
             'image': load_image(self._img_paths[idx]),
-            'polys': self._boxes[idx][0].copy(),
-            'ignore': self._boxes[idx][1].copy()
+            'polys': self._boxes[idx].copy(),
+            'ignore': np.zeros(self._boxes[idx].shape[0], dtype=bool)
         }
 
         # Random Augment

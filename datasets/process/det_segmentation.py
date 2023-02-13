@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import pyclipper
-from shapely import Polygon
+from shapely.geometry import Polygon
 
 
 class MakeSegDetectionData:

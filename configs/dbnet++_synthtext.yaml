@@ -1,0 +1,52 @@
+env:
+  device_target: Ascend   # CPU/GPU/Ascend
+  device_id: 0            # list available devices separated by comma, e.g. 1, 4, 7
+  mode: graph             # pynative, graph
+  profiler: ''            # profiling output folder. If empty, the profiler is turned off
+
+model:
+  name: dbnet++
+  load_ckpt: ''
+  save_ckpt: 'ckpts/dbnet++/SynthText'
+  bias: false
+  adaptive: true
+
+  backbone:
+    name: resnet50
+    deform_conv: false
+    dcn_lr_mul: 0.1       # deformable convolution learning rate multiplier
+    pretrained: true      # Path to the pretrained backbone or `true` to load imagenet weights
+
+train:
+  start_epoch: 0
+  epochs: 3
+
+  scheduler:
+    name: constant
+    params:
+      lr: 0.001
+      warmup_epochs: 0
+
+  optimizer:
+    name: SGD
+    params:
+      momentum: 0.9
+      weight_decay: 1.0e-4
+      filter_bias_and_bn: false
+
+dataset:
+  name: SynthText
+  path: 'data/SynthText'
+  prefetch_size: 10
+  train:
+    batch_size: 20
+    num_workers: 10
+    keys: [ 'img', 'gts', 'gt_masks', 'thresh_maps', 'thresh_masks' ]
+    augmentations:
+      RandomScale: { short_side: 640 }
+      RandomRotate: { random_angle: [ -10, 10 ] }
+      RandomFlip: { }
+      RandomCrop: { max_tries: 10, min_crop_side_ratio: 0.1, crop_size: [640, 640] }
+    transforms:
+      MakeSegDetectionData: { min_text_size: 8, shrink_ratio: 0.4 }
+      MakeBorderMap: { shrink_ratio: 0.4, thresh_min: 0.3, thresh_max: 0.7 }

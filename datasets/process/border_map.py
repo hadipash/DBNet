@@ -1,7 +1,15 @@
+import warnings
+
 import cv2
 import numpy as np
 import pyclipper
-from shapely import Polygon
+from shapely.geometry import Polygon
+
+# FIXME:
+#  RuntimeWarning: invalid value encountered in sqrt result = np.sqrt(square_distance_1 * square_distance_2 * square_sin / square_distance)
+#  RuntimeWarning: invalid value encountered in true_divide (2 * np.sqrt(square_distance_1 * square_distance_2))
+#  in lines 95 and 98
+warnings.filterwarnings("ignore")
 
 
 class MakeBorderMap:

@@ -70,9 +70,9 @@ class DetectionIoUEvaluator:
 
         pairs = []
         det_match = 0
-        iou_mat = np.empty([1, 1])
+        iou_mat = np.zeros([1, 1])
         if gt_polys and det_polys:
-            iou_mat = np.empty([len(gt_polys), len(det_polys)])
+            iou_mat = np.zeros([len(gt_polys), len(det_polys)])
             det_rect_mat = np.zeros(len(det_polys), np.int8)
 
             for gt_idx in range(len(gt_polys)):

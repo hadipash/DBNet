@@ -61,7 +61,9 @@ class RandomCrop:
         w = int(crop_w * scale)
         # Pad the rest of crop_size with 0.
         padimg = np.zeros((self.size[1], self.size[0], data['image'].shape[2]), data['image'].dtype)
-        padimg[:h, :w] = cv2.resize(data['image'][crop_y:crop_y + crop_h, crop_x:crop_x + crop_w], (w, h))
+        start_y, start_x = np.random.randint(0, self.size[1] - h + 1), np.random.randint(0, self.size[0] - w + 1)
+        padimg[start_y: start_y + h, start_x: start_x + w] = cv2.resize(
+            data['image'][crop_y:crop_y + crop_h, crop_x:crop_x + crop_w], (w, h))
         data['image'] = padimg
 
         new_polys = []
@@ -69,10 +71,10 @@ class RandomCrop:
         for i in range(len(data['polys'])):
             # Rescale all original polys.
             poly = data['polys'][i]
-            poly = ((np.array(poly) - (crop_x, crop_y)) * scale)
+            poly = ((poly - (crop_x, crop_y)) * scale)
             # Filter out the polys in the cropped rectangle.
             if not self.is_poly_outside_rect(poly, 0, 0, w, h):
-                new_polys.append(poly)
+                new_polys.append(poly + (start_x, start_y))
                 new_dontcare.append(data['ignore'][i])
 
         data['polys'] = new_polys

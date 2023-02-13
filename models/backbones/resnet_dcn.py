@@ -1,7 +1,7 @@
 from typing import Tuple
 
 from mindspore import nn, ops, Tensor
-from mindcv.models.resnet import ResNet, Bottleneck, load_pretrained, default_cfgs
+from mindcv.models.resnet import ResNet, Bottleneck
 
 
 # TODO:
@@ -75,15 +75,3 @@ class DBNetResNetDCN(DBNetResNet):
         self.layer2 = self._make_layer(BottleneckDCN, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(BottleneckDCN, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(BottleneckDCN, 512, layers[3], stride=2)
-
-
-def create_backbone(name: str, dcn=False, pretrained=True):
-    if name == 'resnet50':
-        layers = [3, 4, 6, 3]
-        network = DBNetResNetDCN(Bottleneck, layers) if dcn else DBNetResNet(Bottleneck, layers)
-        if pretrained:
-            load_pretrained(network, default_cfgs[name], num_classes=0)
-    else:
-        raise ValueError(f'Not supported backbone: {name}')
-
-    return network

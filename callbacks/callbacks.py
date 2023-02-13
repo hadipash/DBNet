@@ -7,25 +7,31 @@ from mindspore.train.callback import Callback
 
 
 class EpochSummary(Callback):
-    def __init__(self, model, val_dataset, val_freq=5, folder='./ckpts'):
+    def __init__(self, model, val_dataset, val_freq=5, update_freq=1, folder='./ckpts'):
         self._model = model
         self._data = val_dataset
         self._val_freq = val_freq
+        self._update_freq = update_freq
         self._folder = Path(folder)
         self._folder.mkdir(parents=True, exist_ok=True)
         self._max_f = 0.
         self._losses = []
         # a placeholder for the train progress meter. The actual initialization is in `on_train_epoch_begin`
         self._pbar = tqdm(disable=True)
+        self._pbar_ncols = 100
 
     def on_train_step_end(self, run_context):
-        self._losses.append(run_context.original_args().net_outputs.asnumpy())
-        self._pbar.update()
-        self._pbar.set_postfix_str(f'Loss: {self._losses[-1]:.4f}')
+        cb_params = run_context.original_args()
+        self._losses.append(cb_params.net_outputs.asnumpy())
+        if cb_params.cur_step_num % self._update_freq == 0:
+            log = f'Loss: {self._losses[-1]:.4f}'
+            self._pbar.ncols = self._pbar_ncols + len(log)
+            self._pbar.update(self._update_freq)
+            self._pbar.set_postfix_str(log)
 
     def on_train_epoch_begin(self, run_context):
         self._pbar.close()
-        self._pbar = tqdm(total=run_context.original_args().batch_num, ncols=140)
+        self._pbar = tqdm(total=run_context.original_args().batch_num, ncols=self._pbar_ncols)
         self._pbar.set_description(f'Epoch {run_context.original_args().cur_epoch_num}')
         self._losses = []
 
@@ -34,7 +40,7 @@ class EpochSummary(Callback):
         epoch = cb_params.cur_epoch_num
 
         loss = np.average(self._losses)
-        if epoch % self._val_freq == 0:
+        if self._data is not None and epoch % self._val_freq == 0:
             metrics = self._model.eval(self._data, dataset_sink_mode=False)['Eval']
             log = f"Loss: {loss:.4f} | Recall: {metrics['recall'].avg:.4f} | " \
                   f"Precision: {metrics['precision'].avg:.4f} | F-score: {metrics['fmeasure'].avg:.4f}"
@@ -48,6 +54,7 @@ class EpochSummary(Callback):
         else:
             log = f"Loss: {loss:.4f}"
 
+        self._pbar.ncols = self._pbar_ncols + len(log)
         self._pbar.set_postfix_str(log)
 
     def __exit__(self, *err):

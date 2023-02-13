@@ -1,5 +1,4 @@
 from typing import Tuple
-
 from mindspore import nn, ops, Tensor
 
 
@@ -53,7 +52,8 @@ class AdaptiveScaleFusion(nn.Cell):
 
 
 class DBNet(nn.Cell):
-    def __init__(self, backbone, inner_channels=256, bias=False, weight_init='HeUniform', adaptive=False, k=50):
+    def __init__(self, backbone, inner_channels=256, bias=False, weight_init='HeUniform', adaptive=False, k=50,
+                 **kwargs):
         super().__init__()
         self.backbone = backbone
         self.adaptive = adaptive
@@ -119,16 +119,3 @@ class DBNetPP(DBNet):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.fuse = AdaptiveScaleFusion(self.inner_channels)
-
-
-def create_model(model: str, backbone='resnet50', train=False):
-    from backbones.resnet_dcn import create_backbone
-
-    backbone = create_backbone(backbone, dcn=False)
-
-    if model == 'dbnet':
-        return DBNet(backbone, adaptive=train)
-    elif model == 'dbnet++':
-        return DBNetPP(backbone=backbone, adaptive=train)
-    else:
-        raise ValueError(f'Unknown model {model}')
