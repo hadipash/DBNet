@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-from mindspore.dataset.vision import RandomColorAdjust, ToPIL, ToTensor
+from mindspore.dataset.vision import RandomColorAdjust, ToPIL, HWC2CHW, Normalize
 
 from .base_dataset import OCRDataset
 from .utils import load_image, scale_pad, resize, get_bboxes
@@ -22,6 +22,9 @@ class ICDAR2015Dataset(OCRDataset):
         gt_paths = [path / f"{'train' if train else 'test'}_gts" / ('gt_' + Path(img_path).stem + '.txt')
                     for img_path in self._img_paths]
         self._boxes = [get_bboxes(gt, icdar2015=True) for gt in gt_paths]
+
+        self._normalize = Normalize(self._MEAN, self._STD)
+        self._hwc2chw = HWC2CHW()
 
     def __getitem__(self, idx):
         data = {
@@ -52,7 +55,7 @@ class ICDAR2015Dataset(OCRDataset):
             data['polys'] = polys
 
         # Normalize
-        data['image'] -= self.RGB_MEAN
-        data['image'] = ToTensor()(data['image'])
+        data['image'] = self._normalize(data['image'])
+        data['image'] = self._hwc2chw(data['image'])
 
         return tuple(data[k] for k in self._keys)

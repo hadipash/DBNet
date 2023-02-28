@@ -3,7 +3,7 @@ from mindspore import nn
 
 class DiceLoss(nn.LossBase):
     def __init__(self, eps=1e-6):
-        super(DiceLoss, self).__init__()
+        super().__init__()
         self._eps = eps
 
     def construct(self, pred, *labels):

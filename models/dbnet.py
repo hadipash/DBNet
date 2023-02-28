@@ -13,27 +13,28 @@ def resize_nn(x: Tensor, scale: int = 0, shape: Tuple[int] = None):
 
 class AdaptiveScaleFusion(nn.Cell):
     # TODO: completed, just move fuse layer in model printout to correct position
-    def __init__(self, in_channels, channel_attention=True):
+    def __init__(self, in_channels, channel_attention=True, weight_init='HeUniform'):
         super().__init__()
         out_channels = in_channels // 4
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, pad_mode='pad', has_bias=True)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, pad_mode='pad', has_bias=True,
+                              weight_init=weight_init)
 
         self.chan_att = nn.SequentialCell([
-            nn.Conv2d(out_channels, out_channels // 4, kernel_size=1, pad_mode='valid'),
+            nn.Conv2d(out_channels, out_channels // 4, kernel_size=1, pad_mode='valid', weight_init=weight_init),
             nn.ReLU(),
-            nn.Conv2d(out_channels // 4, out_channels, kernel_size=1, pad_mode='valid'),
+            nn.Conv2d(out_channels // 4, out_channels, kernel_size=1, pad_mode='valid', weight_init=weight_init),
             nn.Sigmoid()
         ]) if channel_attention else None
 
         self.spat_att = nn.SequentialCell([
-            nn.Conv2d(1, 1, kernel_size=3, padding=1, pad_mode='pad'),
+            nn.Conv2d(1, 1, kernel_size=3, padding=1, pad_mode='pad', weight_init=weight_init),
             nn.ReLU(),
-            nn.Conv2d(1, 1, kernel_size=1, pad_mode='valid'),
+            nn.Conv2d(1, 1, kernel_size=1, pad_mode='valid', weight_init=weight_init),
             nn.Sigmoid()
         ])
 
         self.scale_att = nn.SequentialCell([
-            nn.Conv2d(out_channels, 4, kernel_size=1, pad_mode='valid'),
+            nn.Conv2d(out_channels, 4, kernel_size=1, pad_mode='valid', weight_init=weight_init),
             nn.Sigmoid()
         ])
 

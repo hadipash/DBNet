@@ -19,5 +19,4 @@ class DBNetWithEvalCell(nn.Cell):
 
     def construct(self, data, label1, label2):
         output = self._network(data)
-        # TODO: perform boxes and scores extraction here?
         return output, label1, label2

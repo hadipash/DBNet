@@ -3,7 +3,7 @@ from typing import List
 
 import numpy as np
 from scipy.io import loadmat
-from mindspore.dataset.vision import RandomColorAdjust, ToPIL, ToTensor
+from mindspore.dataset.vision import RandomColorAdjust, ToPIL, HWC2CHW, Normalize
 
 from .base_dataset import OCRDataset
 from .utils import load_image, scale_pad, resize
@@ -18,6 +18,9 @@ class SynthTextDataset(OCRDataset):
         self._size = target_size
         path = Path(path)
         self._img_paths, self._boxes = self._extract_labels(path)
+
+        self._normalize = Normalize(self._MEAN, self._STD)
+        self._hwc2chw = HWC2CHW()
 
     @staticmethod
     def _extract_labels(path):
@@ -59,7 +62,7 @@ class SynthTextDataset(OCRDataset):
             data['polys'] = polys
 
         # Normalize
-        data['image'] -= self.RGB_MEAN
-        data['image'] = ToTensor()(data['image'])
+        data['image'] = self._normalize(data['image'])
+        data['image'] = self._hwc2chw(data['image'])
 
         return tuple(data[k] for k in self._keys)

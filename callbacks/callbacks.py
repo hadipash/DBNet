@@ -42,13 +42,13 @@ class EpochSummary(Callback):
         loss = np.average(self._losses)
         if self._data is not None and epoch % self._val_freq == 0:
             metrics = self._model.eval(self._data, dataset_sink_mode=False)['Eval']
-            log = f"Loss: {loss:.4f} | Recall: {metrics['recall'].avg:.4f} | " \
-                  f"Precision: {metrics['precision'].avg:.4f} | F-score: {metrics['fmeasure'].avg:.4f}"
+            log = f"Loss: {loss:.4f} | Recall: {metrics['recall']:.4f} | " \
+                  f"Precision: {metrics['precision']:.4f} | F-score: {metrics['f-score']:.4f}"
 
-            if metrics['fmeasure'].avg > self._max_f:
-                self._max_f = metrics['fmeasure'].avg
-                file_name = str(self._folder / f"epoch{epoch}_l{loss:.4f}_r{metrics['recall'].avg:.4f}_"
-                                               f"p{metrics['precision'].avg:.4f}_f{metrics['fmeasure'].avg:.4f}.ckpt")
+            if metrics['f-score'] > self._max_f:
+                self._max_f = metrics['f-score']
+                file_name = str(self._folder / f"epoch{epoch}_l{loss:.4f}_r{metrics['recall']:.4f}_"
+                                               f"p{metrics['precision']:.4f}_f{metrics['f-score']:.4f}.ckpt")
                 # Save the network model.
                 save_checkpoint(cb_params.train_network, ckpt_file_name=file_name, async_save=True)
         else:

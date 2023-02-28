@@ -14,7 +14,7 @@ class L1BalanceCELoss(nn.LossBase):
     '''
 
     def __init__(self, eps=1e-6, bce_scale=5, l1_scale=10, bce_replace="bceloss"):
-        super(L1BalanceCELoss, self).__init__()
+        super().__init__()
 
         self.dice_loss = DiceLoss(eps=eps)
         self.l1_loss = MaskL1Loss()

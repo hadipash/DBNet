@@ -1,5 +1,3 @@
-from shutil import copy
-from pathlib import Path
 import mindspore as ms
 from mindcv import create_scheduler, create_optimizer
 
@@ -7,7 +5,7 @@ from models import create_model
 from losses.total_dbnet_loss import L1BalanceCELoss
 from models.model_utils import DBNetWithLossCell, DBNetWithEvalCell
 from datasets import create_dataset
-from metrics.metric import DBNetMetric
+from metrics import DBNetMetric
 from callbacks import EpochSummary
 
 
@@ -40,6 +38,8 @@ def train(config):
 if __name__ == '__main__':
     import yaml
     import argparse
+    from shutil import copy
+    from pathlib import Path
 
     parser = argparse.ArgumentParser()
     parser.add_argument('-c', '--config', help='path to the configuration yaml file')
