@@ -5,15 +5,15 @@ from mindspore import nn
 from shapely.geometry import Polygon
 from sklearn.metrics import recall_score, precision_score, f1_score
 
-from .post_process import SegDetectorRepresenter
+from .post_process import Postprocessor
 
 
-def _get_intersect(pD, pG):
-    return pD.intersection(pG).area
+def _get_intersect(pd, pg):
+    return pd.intersection(pg).area
 
 
-def _get_iou(pD, pG):
-    return pD.intersection(pG).area / pD.union(pG).area
+def _get_iou(pd, pg):
+    return pd.intersection(pg).area / pd.union(pg).area
 
 
 class DetectionIoUEvaluator:
@@ -72,60 +72,28 @@ class DetectionIoUEvaluator:
         return gt_labels, det_labels
 
 
-class QuadMetric:
-    def __init__(self, is_output_polygon=False):
-        self.is_output_polygon = is_output_polygon
-        self.evaluator = DetectionIoUEvaluator()
-
-    def __call__(self, batch, output, box_thresh=0.7):
-        '''
-        batch: (image, polygons, ignore_tags)
-            image: numpy array of shape (N, C, H, W).
-            polys: numpy array of shape (N, K, 4, 2), the polygons of objective regions.
-            dontcare: numpy array of shape (N, K), indicates whether a region is ignorable or not.
-        output: (polygons, ...)
-        '''
-        gt_polys = batch['polys'].astype(np.float32)
-        gt_ignore_info = batch['ignore']
-        pred_polys = np.array(output[0])
-        pred_scores = np.array(output[1])
-
-        gt_labels, det_labels = [], []
-        for sample_id in range(len(gt_polys)):
-            gt = [{'polys': gt_polys[sample_id][j], 'ignore': gt_ignore_info[sample_id][j]}
-                  for j in range(len(gt_polys[sample_id]))]
-            if self.is_output_polygon:
-                pred = [sample for sample in pred_polys[sample_id]]    # TODO: why are polygons not filtered?
-            else:
-                pred = [pred_polys[sample_id][j].astype(np.int32)
-                        for j in range(pred_polys[sample_id].shape[0]) if pred_scores[sample_id][j] >= box_thresh]
-
-            gt_label, det_label = self.evaluator(gt, pred)
-            gt_labels.append(gt_label)
-            det_labels.append(det_label)
-        return gt_labels, det_labels
-
-    def validate_measure(self, batch, output):
-        return self(batch, output, box_thresh=0.55)     # TODO: why is here a fixed threshold and different from the above?
-
-
 class DBNetMetric(nn.Metric):
     def __init__(self):
         super().__init__()
-        self._post_process = SegDetectorRepresenter(box_thresh=0.6)
-        self.clear()
+        self._evaluator = DetectionIoUEvaluator()
+        self._post_process = Postprocessor(box_thresh=0.6, output_polygon=False)
+        self._gt_labels, self._det_labels = [], []
 
     def clear(self):
-        self._metric = QuadMetric()
         self._gt_labels, self._det_labels = [], []
 
     def update(self, *inputs):
         preds, polys, ignore = inputs
-        gt = {'polys': polys.asnumpy(), 'ignore': ignore.asnumpy()}
-        boxes, scores = self._post_process(preds)
-        gt_labels, det_labels = self._metric.validate_measure(gt, (boxes, scores))
-        self._gt_labels.extend(gt_labels)
-        self._det_labels.extend(det_labels)
+        polys = polys.asnumpy().astype(np.float32)
+        ignore = ignore.asnumpy()
+
+        extracted_boxes = self._post_process(preds)
+
+        for sample_id in range(len(polys)):
+            gt = [{'polys': poly, 'ignore': ig} for poly, ig in zip(polys[sample_id], ignore[sample_id])]
+            gt_label, det_label = self._evaluator(gt, extracted_boxes[sample_id][0])
+            self._gt_labels.append(gt_label)
+            self._det_labels.append(det_label)
 
     def eval(self):
         self._det_labels = np.array([l for label in self._det_labels for l in label])
