@@ -2,110 +2,77 @@ import warnings
 
 import cv2
 import numpy as np
-import pyclipper
 from shapely.geometry import Polygon
 
+from .utils import expand_poly
+
 # FIXME:
-#  RuntimeWarning: invalid value encountered in sqrt result = np.sqrt(square_distance_1 * square_distance_2 * square_sin / square_distance)
-#  RuntimeWarning: invalid value encountered in true_divide (2 * np.sqrt(square_distance_1 * square_distance_2))
-#  in lines 95 and 98
+#  RuntimeWarning: invalid value encountered in sqrt result = np.sqrt(a_sq * b_sq * sin_sq / c_sq)
+#  RuntimeWarning: invalid value encountered in true_divide cos = (a_sq + b_sq - c_sq) / (2 * np.sqrt(a_sq * b_sq))
 warnings.filterwarnings("ignore")
 
 
-class MakeBorderMap:
+class BorderMap:
     def __init__(self, shrink_ratio=0.4, thresh_min=0.3, thresh_max=0.7):
-
-        super(MakeBorderMap, self).__init__()
-        self.shrink_ratio = shrink_ratio
-        self.thresh_min = thresh_min
-        self.thresh_max = thresh_max
+        self._shrink_ratio = shrink_ratio
+        self._thresh_min = thresh_min
+        self._thresh_max = thresh_max
+        self._dist_coef = 1 - self._shrink_ratio ** 2
 
     def __call__(self, data):
-        thresh_map = np.zeros(data['image'].shape[:2], dtype=np.float32)
-        thresh_mask = np.zeros(data['image'].shape[:2], dtype=np.float32)
+        border = np.zeros(data['image'].shape[:2], dtype=np.float32)
+        mask = np.zeros(data['image'].shape[:2], dtype=np.float32)
 
         for i in range(len(data['polys'])):
             if not data['ignore'][i]:
-                self.draw_border_map(data['polys'][i], thresh_map, mask=thresh_mask)
-        thresh_map = thresh_map * (self.thresh_max - self.thresh_min) + self.thresh_min
-        data['thresh_map'] = thresh_map
-        data['thresh_mask'] = thresh_mask
+                self._draw_border(data['polys'][i], border, mask=mask)
+        border = border * (self._thresh_max - self._thresh_min) + self._thresh_min
 
-    def draw_border_map(self, polygon, canvas, mask):
-        polygon = np.array(polygon)
-        assert polygon.ndim == 2
-        assert polygon.shape[1] == 2
+        data['thresh_map'] = border
+        data['thresh_mask'] = mask
 
-        polygon_shape = Polygon(polygon)
-        distance = polygon_shape.area * \
-                   (1 - np.power(self.shrink_ratio, 2)) / polygon_shape.length
-        subject = [tuple(l) for l in polygon]
-        padding = pyclipper.PyclipperOffset()
-        padding.AddPath(subject, pyclipper.JT_ROUND,
-                        pyclipper.ET_CLOSEDPOLYGON)
-        padded_polygon = np.array(padding.Execute(distance)[0])
-        cv2.fillPoly(mask, [padded_polygon.astype(np.int32)], 1.0)
+    def _draw_border(self, np_poly, border, mask):
+        # draw mask
+        poly = Polygon(np_poly)
+        distance = self._dist_coef * poly.area / poly.length
+        padded_polygon = np.array(expand_poly(np_poly, distance)[0], dtype=np.int32)
+        cv2.fillPoly(mask, [padded_polygon], 1.0)
 
-        xmin = padded_polygon[:, 0].min()
-        xmax = padded_polygon[:, 0].max()
-        ymin = padded_polygon[:, 1].min()
-        ymax = padded_polygon[:, 1].max()
-        width = xmax - xmin + 1
-        height = ymax - ymin + 1
+        # draw border
+        min_vals, max_vals = np.min(padded_polygon, axis=0), np.max(padded_polygon, axis=0)
+        width, height = max_vals - min_vals + 1
+        np_poly -= min_vals
 
-        polygon[:, 0] = polygon[:, 0] - xmin
-        polygon[:, 1] = polygon[:, 1] - ymin
+        xs = np.broadcast_to(np.linspace(0, width - 1, num=width).reshape(1, width), (height, width))
+        ys = np.broadcast_to(np.linspace(0, height - 1, num=height).reshape(height, 1), (height, width))
 
-        xs = np.broadcast_to(
-            np.linspace(0, width - 1, num=width).reshape(1, width), (height, width))
-        ys = np.broadcast_to(
-            np.linspace(0, height - 1, num=height).reshape(height, 1), (height, width))
+        distance_map = [self._distance(xs, ys, p1, p2) for p1, p2 in zip(np_poly, np.roll(np_poly, 1, axis=0))]
+        distance_map = np.clip(np.array(distance_map, dtype=np.float32) / distance, 0, 1).min(axis=0)
 
-        distance_map = np.zeros(
-            (polygon.shape[0], height, width), dtype=np.float32)
-        for i in range(polygon.shape[0]):
-            j = (i + 1) % polygon.shape[0]
-            absolute_distance = self.distance(xs, ys, polygon[i], polygon[j])
-            distance_map[i] = np.clip(absolute_distance / distance, 0, 1)
-        distance_map = distance_map.min(axis=0)
+        min_valid = np.clip(min_vals, 0, np.array(border.shape[::-1]) - 1)  # shape reverse order: w, h
+        max_valid = np.clip(max_vals, 0, np.array(border.shape[::-1]) - 1)
 
-        xmin_valid = min(max(0, xmin), canvas.shape[1] - 1)
-        xmax_valid = min(max(0, xmax), canvas.shape[1] - 1)
-        ymin_valid = min(max(0, ymin), canvas.shape[0] - 1)
-        ymax_valid = min(max(0, ymax), canvas.shape[0] - 1)
-        canvas[ymin_valid:ymax_valid + 1, xmin_valid:xmax_valid + 1] = np.fmax(
-            1 - distance_map[
-                ymin_valid - ymin:ymax_valid - ymax + height,
-                xmin_valid - xmin:xmax_valid - xmax + width],
-            canvas[ymin_valid:ymax_valid + 1, xmin_valid:xmax_valid + 1])
+        border[min_valid[1]: max_valid[1] + 1, min_valid[0]: max_valid[0] + 1] = np.fmax(
+            1 - distance_map[min_valid[1] - min_vals[1]: max_valid[1] - max_vals[1] + height,
+                             min_valid[0] - min_vals[0]: max_valid[0] - max_vals[0] + width],
+            border[min_valid[1]: max_valid[1] + 1, min_valid[0]: max_valid[0] + 1]
+        )
 
-    def distance(self, xs, ys, point_1, point_2):
+    @staticmethod
+    def _distance(xs, ys, point_1, point_2):
         """
-        compute the distance from point to a line
+        compute the distance from each point to a line
         ys: coordinates in the first axis
         xs: coordinates in the second axis
         point_1, point_2: (x, y), the end of the line
         """
-        square_distance_1 = np.square(xs - point_1[0]) + np.square(ys - point_1[1])
-        square_distance_2 = np.square(xs - point_2[0]) + np.square(ys - point_2[1])
-        square_distance = np.square(point_1[0] - point_2[0]) + np.square(point_1[1] - point_2[1])
+        a_sq = np.square(xs - point_1[0]) + np.square(ys - point_1[1])
+        b_sq = np.square(xs - point_2[0]) + np.square(ys - point_2[1])
+        c_sq = np.square(point_1[0] - point_2[0]) + np.square(point_1[1] - point_2[1])
 
-        cosin = (square_distance - square_distance_1 - square_distance_2) / \
-                (2 * np.sqrt(square_distance_1 * square_distance_2))
-        square_sin = 1 - np.square(cosin)
-        square_sin = np.nan_to_num(square_sin)
-        result = np.sqrt(square_distance_1 * square_distance_2 * square_sin / square_distance)
+        cos = (a_sq + b_sq - c_sq) / (2 * np.sqrt(a_sq * b_sq))
+        sin_sq = np.nan_to_num(1 - np.square(cos))
+        result = np.sqrt(a_sq * b_sq * sin_sq / c_sq)
 
-        result[cosin < 0] = np.sqrt(np.fmin(square_distance_1, square_distance_2))[cosin < 0]
+        result[cos >= 0] = np.sqrt(np.fmin(a_sq, b_sq))[cos >= 0]
         return result
-
-    def extend_line(self, point_1, point_2, result):
-        ex_point_1 = (int(round(point_1[0] + (point_1[0] - point_2[0]) * (1 + self.shrink_ratio))),
-                      int(round(point_1[1] + (point_1[1] - point_2[1]) * (1 + self.shrink_ratio))))
-        cv2.line(result, tuple(ex_point_1), tuple(point_1),
-                 4096.0, 1, lineType=cv2.LINE_AA, shift=0)
-        ex_point_2 = (int(round(point_2[0] + (point_2[0] - point_1[0]) * (1 + self.shrink_ratio))),
-                      int(round(point_2[1] + (point_2[1] - point_1[1]) * (1 + self.shrink_ratio))))
-        cv2.line(result, tuple(ex_point_2), tuple(point_2),
-                 4096.0, 1, lineType=cv2.LINE_AA, shift=0)
-        return ex_point_1, ex_point_2

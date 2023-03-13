@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 
 from mindcv.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
-from .process import MakeBorderMap, MakeSegDetectionData
+from .process import BorderMap, ShrunkBinaryMap
 from .augment.augments import RandomCrop, RandomFlip, RandomScale, RandomRotate
 
 
@@ -16,8 +16,8 @@ _AUGMENTATIONS = {
 
 
 _TRANSFORMS = {
-    'MakeBorderMap': MakeBorderMap,
-    'MakeSegDetectionData': MakeSegDetectionData
+    'BorderMap': BorderMap,
+    'ShrunkBinaryMap': ShrunkBinaryMap
 }
 
 

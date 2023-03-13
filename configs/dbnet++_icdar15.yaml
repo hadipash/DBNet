@@ -25,7 +25,6 @@ train:
     name: polynomial_decay
     params:
       lr: 0.007
-      min_lr: 0.
       warmup_epochs: 3
       decay_rate: 0.9
 
@@ -53,8 +52,8 @@ dataset:
       RandomFlip: { }
       RandomCrop: { max_tries: 10, min_crop_side_ratio: 0.1, crop_size: [640, 640] }
     transforms:
-      MakeSegDetectionData: { min_text_size: 8, shrink_ratio: 0.4 }
-      MakeBorderMap: { shrink_ratio: 0.4, thresh_min: 0.3, thresh_max: 0.7 }
+      ShrunkBinaryMap: { min_text_size: 8, shrink_ratio: 0.4 }
+      BorderMap: { shrink_ratio: 0.4, thresh_min: 0.3, thresh_max: 0.7 }
   val:
     batch_size: 1
     num_workers: 1
